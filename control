@@ -1,0 +1,8 @@
+Package: com.il2cpp.menu
+Name: IL2CPP MOD MENU
+Depends: mobilesubstrate
+Version: 2.0
+Architecture: iphoneos-arm64
+Description: IL2CPP MOD MENU
+Maintainer: AlexZero
+Author: AlexZero
