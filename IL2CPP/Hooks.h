@@ -152,6 +152,16 @@ Vector3 Camera_WorldtoscreenPoint(void* camera, Vector3 position){
     }
 }
 
+
+Bounds Renderer_get_bounds(void* renderer) {
+    try {
+        return reinterpret_cast<Bounds(__fastcall *)(void *)>((uint64_t) IL2Cpp::GetMethodOffset("UnityEngine.CoreModule.dll", "UnityEngine", "Renderer", "get_bounds", 0))(renderer);
+    } catch (...) {
+        Logger::error("Failed to get Renderer_get_bounds method offset");
+        return {Vector3(0,0,0), Vector3(0,0,0)};
+    }
+}
+
 monoArray<void**>* SkinnedMeshRenderer_get_bones(void* smr) {
     try {
         return reinterpret_cast<monoArray<void**>*(__fastcall *)(void *)>((uint64_t) IL2Cpp::GetMethodOffset("UnityEngine.CoreModule.dll", "UnityEngine", "SkinnedMeshRenderer", "get_bones", 0))(smr);

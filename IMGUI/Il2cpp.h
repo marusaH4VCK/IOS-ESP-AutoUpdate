@@ -2,15 +2,7 @@
 
 #include <stdio.h>
 #include <string>
-#include <inttypes.h>
-#include <codecvt>
-#include <locale>
-#include <dlfcn.h>
-#include <mach-o/dyld.h>
-#pragma once
-
-#include <stdio.h>
-#include <string>
+#include <vector>
 #include <inttypes.h>
 #include <codecvt>
 #include <locale>

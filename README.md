@@ -4,40 +4,41 @@ IOS ESP Unity AutoUpdate
 <img width="1080" height="701" alt="photo_2025-09-09_00-35-35" src="https://github.com/user-attachments/assets/7f8b2e68-4c45-48f6-a3eb-d8a3a04805f9" />
 
 
-# ESPConfig.h - ESP Configuration for Different Games
+# ESP Configuration & Dynamic Update
 
-This file contains the most important settings to adapt ESP (Extra Sensory Perception) to your game.
+This project features an advanced Unity ESP system with **Dynamic Targeting**, allowing you to adapt to different games or game objects without re-compiling.
 
-## Most Important Settings
+## Dynamic ESP Targeting (NEW!)
 
-### 1. Player Class (MOST IMPORTANT!)
+Instead of hardcoding values, you can now use the **In-Game Mod Menu** to select your target in real-time:
 
+1. **Target Assembly**: Select the Unity Assembly (e.g., `_CombatMaster.Battle.dll`) from the dropdown list.
+2. **Target Class**: After selecting an assembly, the Class list will automatically update. Choose your player or entity class (e.g., `PlayerRoot`).
+
+The ESP will instantly switch to tracking the selected entities.
+
+## ESPConfig.h - Default Values
+
+While you can change targets in-game, you can also set the default startup values in `ESPConfig.h`.
+
+### 1. Default Player Class
 ```cpp
-// Main player class - YOU MUST FIND THE CORRECT NAME
+// Default target for initialization
 #define PLAYER_CLASS_NAME "CombatMaster.Battle.Gameplay.Player.PlayerRoot"
 #define PLAYER_ASSEMBLY_NAME "_CombatMaster.Battle.dll"
 ```
 
-**Example:**
-```cpp
-// Example player class name
-#define PLAYER_CLASS_NAME "MyGame.Player.PlayerController"
-#define PLAYER_ASSEMBLY_NAME "MyGame.dll"
-```
-
-
 ### 2. Skeleton Components
-
 ```cpp
-// SkinnedMeshRenderer (usually don't change)
+// Component used to find bones (usually SkinnedMeshRenderer)
 #define SKINNED_MESH_RENDERER_CLASS_NAME "UnityEngine.SkinnedMeshRenderer"
 ```
 
-## What You Need to Do
+## How to use
+1. **Launch the game** and open the Mod Menu.
+2. **Go to ESP Tab**.
+3. **Select Assembly & Class** corresponding to the entities you want to see.
+4. **Enable ESP** (Line, Box, Skeleton, etc.).
 
-1. **Find player class** - this is most important!
-2. **Check assembly name** - must be exact
-3. **Test** - if ESP works
 ---
-
 **Note:** For educational purposes. Use responsibly.
