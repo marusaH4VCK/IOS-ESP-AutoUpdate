@@ -1,7 +1,7 @@
 # IOS-ESP-AutoUpdate
 IOS ESP Unity AutoUpdate
 
-<img width="1080" height="701" alt="photo_2025-09-09_00-35-35" src="https://github.com/user-attachments/assets/7f8b2e68-4c45-48f6-a3eb-d8a3a04805f9" />
+![IMAGE 2026-02-06 14:47:39](https://github.com/user-attachments/assets/43bd76ed-e18c-4727-84ad-670d18d59762)
 
 
 # ESP Configuration & Dynamic Update
