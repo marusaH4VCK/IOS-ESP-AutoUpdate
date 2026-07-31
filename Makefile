@@ -43,5 +43,3 @@ $(TWEAK_NAME)_FILES = ImGuiDrawView.mm $(wildcard Esp/*.mm) $(wildcard Esp/*.m) 
 # GO_EASY_ON_ME = 1
 
 include $(THEOS_MAKE_PATH)/tweak.mk
-
-
