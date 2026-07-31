@@ -703,7 +703,7 @@ static bool MenDeal = true;
                 // Set font scale to user preference for the main menu content
                 if (font) font->Scale = ui_scale;
 
-                ImGui::Begin("GoodFeelings | https://goodfeelings.cc", &MenDeal, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse);
+                ImGui::Begin("PAY TO WIN | https://t.me/monstercheatez", &MenDeal, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse);
 
                 ImDrawList* drawList = ImGui::GetWindowDrawList();
                 ImVec2 windowPos = ImGui::GetWindowPos();
@@ -717,12 +717,12 @@ static bool MenDeal = true;
                 drawList->AddLine(ImVec2(windowPos.x, windowPos.y + headerHeight), ImVec2(windowPos.x + windowSize.x, windowPos.y + headerHeight), ImGui::ColorConvertFloat4ToU32(COLOR_BORDER));
 
                 // Title Text on the Left
-                const char* leftText = "GoodFeelings";
+                const char* leftText = "PAY TO WIN";
                 ImVec2 leftTextSize = ImGui::CalcTextSize(leftText);
                 drawList->AddText(ImVec2(windowPos.x + 10, windowPos.y + (headerHeight - leftTextSize.y) * 0.5f), ImGui::ColorConvertFloat4ToU32(COLOR_CHECK_MARK), leftText);
                 
                 // Title Text on the Right
-                const char* titleText = "Unity ESP Auto Update";
+                const char* titleText = "MOALISA";
                 ImVec2 textSize = ImGui::CalcTextSize(titleText);
                 drawList->AddText(ImVec2(windowPos.x + windowSize.x - textSize.x - 10, windowPos.y + (headerHeight - textSize.y) * 0.5f), ImGui::ColorConvertFloat4ToU32(COLOR_CHECK_MARK), titleText);
 
@@ -862,8 +862,8 @@ static bool MenDeal = true;
                         ImGui::Separator();
                         
                         ImGui::TextColored(COLOR_CHECK_MARK, "Credits:");
-                        ImGui::Text("Released By: GoodFeelings");
-                        ImGui::Text("IL2CPP Framework: Hao Dam (damduchao)");
+                        ImGui::Text("Released By: MIEMona");
+                        ImGui::Text("IL2CPP Framework: MIEMona (MONALISA)");
                         ImGui::EndTabItem();
                     }
                     
