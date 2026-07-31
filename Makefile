@@ -1,4 +1,4 @@
-THEOS_DEVICE_IP = 192.168.0.106 # install to device from pc
+
 ARCHS = arm64
 DEBUG = 0
 FINALPACKAGE = 1
@@ -22,8 +22,7 @@ ifeq ($(MOBILE_THEOS),1)
   $(info ===> Setting SYSROOT to $(SDK_PATH)...)
   SYSROOT = $(SDK_PATH)
 else
-  TARGET = iphone:clang:latest:14.0
-endif
+  TARGET = iphone:latest
 
 include $(THEOS)/makefiles/common.mk
 
