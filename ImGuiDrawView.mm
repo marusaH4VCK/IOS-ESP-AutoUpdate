@@ -85,6 +85,14 @@ static bool esp_corners = false;
 static int esp_line_position = 0;
 static float ui_scale = 0.70f;
 
+// Hacks Variables
+static bool hack_fly = false;
+static float hack_fly_speed = 5.0f;
+static bool hack_telekill = false;
+static int hack_telekill_dist = 8; // 8, 10, 100
+static void* telekill_target = nullptr;
+static float last_telekill_time = 0.0f;
+
 
 void* getMainCamera() {
     if (!selectedCamera) {
@@ -187,8 +195,6 @@ void UpdateClasses(const std::string& assemblyName) {
 }
 
 void drawPlayerRootESP(ImDrawList* draw_list) {
-    if (!esp_line && !esp_distance_enabled && !esp_skeleton && !esp_box_2d && !esp_box_3d && !esp_corners) return;
-    
     void* camera = Camera_get_main();
     if (!camera) return;
     
@@ -210,10 +216,20 @@ void drawPlayerRootESP(ImDrawList* draw_list) {
     monoArray<void**>* players = Object_FindObjectsOfType(playerType);
     if (!players || players->getLength() == 0) return;
 
+    void* localPlayer = nullptr;
+    telekill_target = nullptr;
+    float minTargetDist = FLT_MAX;
+
     for (int i = 0; i < players->getLength(); i++) {
         void* object = players->getPointer()[i];
         if (!object) continue;
         
+        bool isOwner = *(bool*)((uint64_t)object + 0x108);
+        if (isOwner) {
+            localPlayer = object;
+            continue;
+        }
+
         void* gameObject = Component_get_gameObject(object);
         if (!gameObject || !GameObject_get_activeInHierarchy(gameObject)) continue;
         
@@ -224,6 +240,18 @@ void drawPlayerRootESP(ImDrawList* draw_list) {
         if (position.x == 0 && position.y == 0 && position.z == 0) continue;
         
         float distToCamera = Vector3::Distance(cameraPosition, position);
+        
+        // Find Telekill Target (closest enemy)
+        if (hack_telekill && localPlayer) {
+            int localTeam = PlayerRoot_get_TeamId(localPlayer);
+            int enemyTeam = PlayerRoot_get_TeamId(object);
+            if (localTeam != enemyTeam && distToCamera < minTargetDist) {
+                minTargetDist = distToCamera;
+                telekill_target = object;
+            }
+        }
+
+        if (!esp_line && !esp_distance_enabled && !esp_skeleton && !esp_box_2d && !esp_box_3d && !esp_corners) continue;
         if (distToCamera > ESP_MAX_DISTANCE) continue;
 
         Vector3 w2sPosition;
@@ -326,6 +354,36 @@ void drawPlayerRootESP(ImDrawList* draw_list) {
         if (esp_corners) DrawESPCorners(draw_list, ImVec2(minX, minY), ImVec2(maxX, maxY), std::max(8.0f, std::min(maxX-minX, maxY-minY)*0.25f), themePink, dynamicThickness);
         if (esp_distance_enabled) DrawESPDistance(draw_list, ImVec2(w2sPosition.x, w2sPosition.y), distToCamera, ESP_DISTANCE_COLOR);
     }
+    
+    // Apply Hacks
+    if (localPlayer) {
+        void* movement = *(void**)((uint64_t)localPlayer + 0xB0);
+        void* transform = Component_get_transform(localPlayer);
+        
+        if (hack_fly && movement && transform) {
+            *(float*)((uint64_t)movement + 0xBC) = 0.0f; // gravityForce = 0
+            
+            Vector3 pos = Transform_get_position(transform);
+            // Simple FLY V2: Fly Up
+            pos.y += hack_fly_speed * 0.05f; 
+            Transform_set_position(transform, pos);
+        }
+        
+        if (hack_telekill && telekill_target && transform) {
+            void* targetTransform = Component_get_transform(telekill_target);
+            if (targetTransform) {
+                Vector3 targetPos = Transform_get_position(targetTransform);
+                Vector3 myPos = targetPos;
+                
+                // Teleport behind or at distance
+                myPos.y += 1.5f; // A bit above
+                myPos.z -= (float)hack_telekill_dist; 
+                
+                Transform_set_position(transform, myPos);
+            }
+        }
+    }
+
     if (esp_skeleton) DrawESPSkeleton(draw_list, camera, (void*)1, cameraPosition, 0.0f);
 }
 
@@ -367,137 +425,95 @@ void drawPlayerRootESP(ImDrawList* draw_list) {
 @property (nonatomic, strong) UIButton *toggleMenuButton;
 @end
 
-
 @implementation ImGuiDrawView
-
-static bool show_s0 = false;
-
-
-
 
 static bool MenDeal = true;
 
-
-- (instancetype)initWithNibName:(nullable NSString *)nibNameOrNil bundle:(nullable NSBundle *)nibBundleOrNil
+- (instancetype)init
 {
-    self = [super initWithNibName:nibNameOrNil bundle:nibBundleOrNil];
-
-    _device = MTLCreateSystemDefaultDevice();
-    _commandQueue = [_device newCommandQueue];
-
-    if (!self.device) abort();
-
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
-
-    // Custom Classic Theme based on source code
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.Colors[ImGuiCol_WindowBg] = COLOR_WINDOW_BG;
-    style.Colors[ImGuiCol_ChildBg] = COLOR_WINDOW_BG;
-    style.Colors[ImGuiCol_PopupBg] = COLOR_WINDOW_BG;
-    style.Colors[ImGuiCol_FrameBg] = COLOR_FRAME_BG;
-    style.Colors[ImGuiCol_FrameBgHovered] = COLOR_BUTTON_HOVERED;
-    style.Colors[ImGuiCol_FrameBgActive] = COLOR_BUTTON_ACTIVE;
-    style.Colors[ImGuiCol_TitleBg] = COLOR_TITLE_BG;
-    style.Colors[ImGuiCol_TitleBgActive] = COLOR_TITLE_BG_ACTIVE;
-    style.Colors[ImGuiCol_TitleBgCollapsed] = COLOR_TITLE_BG;
-    style.Colors[ImGuiCol_CheckMark] = COLOR_CHECK_MARK;
-    style.Colors[ImGuiCol_SliderGrab] = COLOR_SLIDER_GRAB;
-    style.Colors[ImGuiCol_SliderGrabActive] = COLOR_SLIDER_GRAB;
-    style.Colors[ImGuiCol_Button] = COLOR_BUTTON;
-    style.Colors[ImGuiCol_ButtonHovered] = COLOR_BUTTON_HOVERED;
-    style.Colors[ImGuiCol_ButtonActive] = COLOR_BUTTON_ACTIVE;
-    style.Colors[ImGuiCol_Header] = COLOR_HEADER;
-    style.Colors[ImGuiCol_HeaderHovered] = COLOR_HEADER_HOVERED;
-    style.Colors[ImGuiCol_HeaderActive] = COLOR_HEADER_ACTIVE;
-    style.Colors[ImGuiCol_Separator] = COLOR_SEPARATOR;
-    style.Colors[ImGuiCol_SeparatorHovered] = COLOR_SLIDER_GRAB;
-    style.Colors[ImGuiCol_SeparatorActive] = COLOR_SLIDER_GRAB;
-    style.Colors[ImGuiCol_ResizeGrip] = COLOR_SLIDER_GRAB;
-    style.Colors[ImGuiCol_ResizeGripHovered] = ImVec4(1.00f, 0.00f, 0.35f, 1.00f);
-    style.Colors[ImGuiCol_ResizeGripActive] = ImVec4(1.00f, 0.00f, 0.45f, 1.00f);
-    style.Colors[ImGuiCol_Text] = COLOR_TEXT;
-    style.Colors[ImGuiCol_TextDisabled] = ImVec4(COLOR_TEXT.x, COLOR_TEXT.y, COLOR_TEXT.z, 0.5f);
-    style.Colors[ImGuiCol_Border] = COLOR_BORDER;
-    style.Colors[ImGuiCol_Tab] = COLOR_TITLE_BG;
-    style.Colors[ImGuiCol_TabHovered] = COLOR_CHECK_MARK;
-    style.Colors[ImGuiCol_TabActive] = COLOR_CHECK_MARK;
-    style.Colors[ImGuiCol_TabUnfocused] = COLOR_TITLE_BG;
-    style.Colors[ImGuiCol_TabUnfocusedActive] = COLOR_CHECK_MARK;
-    
-    // Style settings matching source
-    style.WindowRounding = 4.0f;
-    style.FrameRounding = 2.0f;
-    style.PopupRounding = 2.0f;
-    style.ScrollbarRounding = 2.0f;
-    style.GrabRounding = 2.0f;
-    style.GrabRounding = 2.0f;
-    style.TabRounding = 2.0f;
-    style.WindowPadding = ImVec2(0.0f, 0.0f);
-    
-    ImFont* font = io.Fonts->AddFontFromMemoryCompressedTTF((void*)din_alternate_compressed_data, din_alternate_compressed_size, 18.0f, NULL, io.Fonts->GetGlyphRangesVietnamese());
-    
-    // Add FontAwesome icons as merge font
-    static const ImWchar icons_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
-    ImFontConfig fa_config;
-    fa_config.MergeMode = true;
-    fa_config.PixelSnapH = true;
-    fa_config.FontDataOwnedByAtlas = false;
-    io.Fonts->AddFontFromMemoryCompressedTTF((void*)fa6_solid_compressed_data, fa6_solid_compressed_size, 16.0f, &fa_config, icons_ranges);
-    
-    ImGui_ImplMetal_Init(_device);
-
+    self = [super init];
+    if (self) {
+        self.device = MTLCreateSystemDefaultDevice();
+        self.commandQueue = [self.device newCommandQueue];
+    }
     return self;
-}
-
-+ (void)showChange:(BOOL)open
-{
-    MenDeal = open;
-}
-
-- (MTKView *)mtkView
-{
-    return (MTKView *)self.view;
 }
 
 - (void)loadView
 {
-
- 
-
     CGFloat w = [UIScreen mainScreen].bounds.size.width;
     CGFloat h = [UIScreen mainScreen].bounds.size.height;
-    self.view = [[ImGuiMTKView alloc] initWithFrame:CGRectMake(0, 0, w, h)];
+    ImGuiMTKView *mtkView = [[ImGuiMTKView alloc] initWithFrame:CGRectMake(0, 0, w, h) device:self.device];
+    mtkView.delegate = self;
+    mtkView.clearColor = MTLClearColorMake(0, 0, 0, 0);
+    mtkView.backgroundColor = [UIColor clearColor];
+    mtkView.paused = NO;
+    mtkView.enableSetNeedsDisplay = NO;
+    self.view = mtkView;
 }
 
-- (void)viewDidLoad {
+- (void)viewDidLoad
+{
     [super viewDidLoad];
     
-    self.mtkView.device = self.device;
-    self.mtkView.delegate = self;
-    self.mtkView.clearColor = MTLClearColorMake(0, 0, 0, 0);
-    self.mtkView.backgroundColor = [UIColor clearColor];
-    self.mtkView.clipsToBounds = YES;
-
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [IL2CPPInit startPrecheck];
-    });
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
     
-    // Delay button setup to ensure logo texture is loaded
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [self setupToggleMenuButton];
-    });
+    // Configure ImGui Style
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding = 8.0f;
+    style.FrameRounding = 4.0f;
+    style.ChildRounding = 6.0f;
+    style.GrabRounding = 4.0f;
+    style.WindowPadding = ImVec2(0, 0);
+    style.FramePadding = ImVec2(10, 8);
+    style.ItemSpacing = ImVec2(10, 10);
+    style.ScrollbarSize = 12.0f;
+    style.ScrollbarRounding = 12.0f;
+    
+    // Set Colors
+    style.Colors[ImGuiCol_WindowBg] = COLOR_WINDOW_BG;
+    style.Colors[ImGuiCol_ChildBg] = COLOR_CHILD_BG;
+    style.Colors[ImGuiCol_FrameBg] = COLOR_FRAME_BG;
+    style.Colors[ImGuiCol_TitleBg] = COLOR_TITLE_BG;
+    style.Colors[ImGuiCol_TitleBgActive] = COLOR_TITLE_BG_ACTIVE;
+    style.Colors[ImGuiCol_Button] = COLOR_BUTTON;
+    style.Colors[ImGuiCol_ButtonHovered] = COLOR_BUTTON_HOVERED;
+    style.Colors[ImGuiCol_ButtonActive] = COLOR_BUTTON_ACTIVE;
+    style.Colors[ImGuiCol_CheckMark] = COLOR_CHECK_MARK;
+    style.Colors[ImGuiCol_SliderGrab] = COLOR_SLIDER_GRAB;
+    style.Colors[ImGuiCol_SliderGrabActive] = COLOR_SLIDER_GRAB;
+    style.Colors[ImGuiCol_Header] = COLOR_HEADER;
+    style.Colors[ImGuiCol_HeaderHovered] = COLOR_HEADER_HOVERED;
+    style.Colors[ImGuiCol_HeaderActive] = COLOR_HEADER_ACTIVE;
+    style.Colors[ImGuiCol_Text] = COLOR_TEXT;
+    style.Colors[ImGuiCol_Border] = COLOR_BORDER;
+    style.Colors[ImGuiCol_Separator] = COLOR_SEPARATOR;
+
+    // Load Fonts
+    ImFontConfig font_cfg;
+    font_cfg.FontDataOwnedByAtlas = false;
+    
+    // Load DIN Alternate for UI
+    io.Fonts->AddFontFromMemoryTTF((void*)din_alternate_data, din_alternate_size, 18.0f, &font_cfg);
+    
+    // Load Icons
+    static const ImWchar icons_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
+    ImFontConfig icons_config;
+    icons_config.MergeMode = true;
+    icons_config.PixelSnapH = true;
+    icons_config.FontDataOwnedByAtlas = false;
+    io.Fonts->AddFontFromMemoryTTF((void*)IconsFontAwesome6_Bytes, sizeof(IconsFontAwesome6_Bytes), 16.0f, &icons_config, icons_ranges);
+
+    ImGui_ImplMetal_Init(self.device);
+    
+    [self setupToggleMenuButton];
 }
 
-
 - (void)setupToggleMenuButton {
-    if (self.toggleMenuButton) return;
-    
-    CGFloat btnSize = 25.0f;
     self.toggleMenuButton = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.toggleMenuButton.frame = CGRectMake(20, 100, btnSize, btnSize);
-    self.toggleMenuButton.layer.cornerRadius = 8.0f;
+    self.toggleMenuButton.frame = CGRectMake(20, 100, 50, 50);
+    self.toggleMenuButton.layer.cornerRadius = 25;
     self.toggleMenuButton.backgroundColor = [UIColor colorWithRed:0.06f green:0.06f blue:0.06f alpha:0.85f];
     self.toggleMenuButton.layer.borderWidth = 2.0f;
     self.toggleMenuButton.layer.borderColor = [UIColor colorWithRed:1.0f green:0.0f blue:0.28f alpha:1.0f].CGColor;
@@ -525,9 +541,6 @@ static bool MenDeal = true;
 
 - (void)toggleMenu {
     MenDeal = !MenDeal;
-    NSLog(@"[GF] Toggle Menu - MenDeal is now: %d", MenDeal);
-    
-    // Ensure button stays on top and interactive
     [self.view bringSubviewToFront:self.toggleMenuButton];
     self.toggleMenuButton.userInteractionEnabled = YES;
 }
@@ -535,25 +548,18 @@ static bool MenDeal = true;
 - (void)handlePan:(UIPanGestureRecognizer *)pangesture {
     CGPoint translation = [pangesture translationInView:self.view];
     CGPoint newCenter = CGPointMake(pangesture.view.center.x + translation.x, pangesture.view.center.y + translation.y);
-    
-    // Keep within bounds
     newCenter.x = MAX(pangesture.view.frame.size.width/2, MIN(self.view.frame.size.width - pangesture.view.frame.size.width/2, newCenter.x));
     newCenter.y = MAX(pangesture.view.frame.size.height/2, MIN(self.view.frame.size.height - pangesture.view.frame.size.height/2, newCenter.y));
-    
     pangesture.view.center = newCenter;
     [pangesture setTranslation:CGPointZero inView:self.view];
 }
-
-#pragma mark - Interaction
 
 - (void)updateIOWithTouchEvent:(UIEvent *)event
 {
     UITouch *anyTouch = event.allTouches.anyObject;
     CGPoint touchLocation = [anyTouch locationInView:self.view];
-    
     ImGuiIO &io = ImGui::GetIO();
     io.MousePos = ImVec2(touchLocation.x, touchLocation.y);
-
     BOOL hasActiveTouch = NO;
     for (UITouch *touch in event.allTouches)
     {
@@ -566,377 +572,134 @@ static bool MenDeal = true;
     io.MouseDown[0] = hasActiveTouch;
 }
 
-- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
-{
-    [self updateIOWithTouchEvent:event];
-}
-
-- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
-{
-    [self updateIOWithTouchEvent:event];
-}
-
-- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
-{
-    [self updateIOWithTouchEvent:event];
-}
-
-- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event
-{
-    [self updateIOWithTouchEvent:event];
-}
-
-#pragma mark - Initialization Overlay
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self updateIOWithTouchEvent:event]; }
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self updateIOWithTouchEvent:event]; }
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self updateIOWithTouchEvent:event]; }
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self updateIOWithTouchEvent:event]; }
 
 - (void)drawInitializationOverlay {
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(ImVec2(kWidth, kHeight));
     ImGui::SetNextWindowBgAlpha(0.0f);
-    
-    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | 
-                                   ImGuiWindowFlags_NoResize | 
-                                   ImGuiWindowFlags_NoMove | 
-                                   ImGuiWindowFlags_NoScrollbar | 
-                                   ImGuiWindowFlags_NoScrollWithMouse |
-                                   ImGuiWindowFlags_NoCollapse |
-                                   ImGuiWindowFlags_NoSavedSettings;
-    
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
     if (ImGui::Begin("InitializationOverlay", nullptr, window_flags)) {
         ImVec2 center = ImGui::GetMainViewport()->GetCenter();
         ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(320, 160), ImGuiCond_Always);
-        
-        ImGuiWindowFlags panel_flags = ImGuiWindowFlags_NoTitleBar | 
-                                      ImGuiWindowFlags_NoResize | 
-                                      ImGuiWindowFlags_NoMove | 
-                                      ImGuiWindowFlags_NoScrollbar | 
-                                      ImGuiWindowFlags_NoScrollWithMouse |
-                                      ImGuiWindowFlags_NoCollapse |
-                                      ImGuiWindowFlags_NoSavedSettings;
-        
-        if (ImGui::Begin("InitPanel", nullptr, panel_flags)) {
-            ImGui::TextColored(ImVec4(0.0f, 0.0f, 0.0f, 1.0f), "Checking IL2CPP functions and symbols...");
-            ImGui::Spacing();
-            
+        if (ImGui::Begin("InitPanel", nullptr, window_flags)) {
+            ImGui::TextColored(ImVec4(0.0f, 0.0f, 0.0f, 1.0f), "Checking IL2CPP functions...");
             float progress = [IL2CPPInit getInitializationProgress];
             ImGui::ProgressBar(progress, ImVec2(-1, 0), "");
-            ImGui::Spacing();
-            
-            const char* currentLabel = [IL2CPPInit getCurrentCheckLabel];
-            int dotCount = [IL2CPPInit getDotCount];
-            std::string dots(dotCount, '.');
-            std::string labelText = std::string("Checking: ") + currentLabel + dots;
-            ImGui::TextColored(ImVec4(0.0f, 0.0f, 0.0f, 1.0f), "%s", labelText.c_str());
-            
-            static float spinnerAngle = 0.0f;
-            spinnerAngle += 0.1f;
-            if (spinnerAngle > 6.28f) spinnerAngle = 0.0f;
-            
-            ImVec2 spinnerPos = ImGui::GetCursorScreenPos();
-            ImGui::GetWindowDrawList()->AddText(
-                ImVec2(spinnerPos.x + 150, spinnerPos.y + 20),
-                ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, 1.0f)),
-                "⟳"
-            );
         }
         ImGui::End();
     }
     ImGui::End();
 }
 
-#pragma mark - MTKViewDelegate
-
 - (void)drawInMTKView:(MTKView*)view
 {
-   
-    
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize.x = view.bounds.size.width;
     io.DisplaySize.y = view.bounds.size.height;
-
     CGFloat framebufferScale = view.window.screen.scale ?: UIScreen.mainScreen.scale;
     io.DisplayFramebufferScale = ImVec2(framebufferScale, framebufferScale);
     io.DeltaTime = 1 / float(view.preferredFramesPerSecond ?: 120);
     
     id<MTLCommandBuffer> commandBuffer = [self.commandQueue commandBuffer];
+    MTLRenderPassDescriptor* renderPassDescriptor = view.currentRenderPassDescriptor;
     
-
-    static bool esp_enabled = false;
-    static bool esp_box_2d = false;
-    static bool esp_box_3d = false;
-    static bool esp_corners = false;
-    
+    if (renderPassDescriptor != nil)
+    {
+        id <MTLRenderCommandEncoder> renderEncoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
+        ImGui_ImplMetal_NewFrame(renderPassDescriptor);
+        ImGui::NewFrame();
         
-        if ([IL2CPPInit isInitializationComplete]) {
-            [self.view setUserInteractionEnabled:YES];
+        [IL2CPPInit updateInitializationProgress];
+        if ([IL2CPPInit isShowingInitOverlay] && ![IL2CPPInit isInitializationComplete]) {
+            [self drawInitializationOverlay];
+        }
+        
+        static bool esp_enabled = false;
+        ImDrawList* drawListESP = ImGui::GetBackgroundDrawList();
+        if (esp_enabled && [IL2CPPInit isInitializationComplete]) {
+            drawPlayerRootESP(drawListESP);
         }
 
-        MTLRenderPassDescriptor* renderPassDescriptor = view.currentRenderPassDescriptor;
-        if (renderPassDescriptor != nil)
+        if (MenDeal == true && [IL2CPPInit isInitializationComplete])
         {
-            id <MTLRenderCommandEncoder> renderEncoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
-            [renderEncoder pushDebugGroup:@"ImGui Jane"];
-
-            ImGui_ImplMetal_NewFrame(renderPassDescriptor);
-            ImGui::NewFrame();
-            
-            [IL2CPPInit updateInitializationProgress];
-            if ([IL2CPPInit isShowingInitOverlay] && ![IL2CPPInit isInitializationComplete]) {
-                [self drawInitializationOverlay];
-            }
-            
             ImFont* font = ImGui::GetFont();
-            
-            // Render ESP with fixed font scale (ignoring user settings)
-            if (font && font->FontSize > 0) {
-                font->Scale = 12.f / 18.0f; // Fixed scale for ESP
-            }
-            
-            CGFloat x = (([UIScreen mainScreen].bounds.size.width) - 360) / 2;
+            if (font) font->Scale = ui_scale;
+
+            CGFloat x = (([UIScreen mainScreen].bounds.size.width) - 400) / 2;
             CGFloat y = (([UIScreen mainScreen].bounds.size.height) - 300) / 2;
-            
             ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_FirstUseEver);
             ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
             
-            if (MenDeal == true && [IL2CPPInit isInitializationComplete])
-            {            
-                // Set font scale to user preference for the main menu content
-                if (font) font->Scale = ui_scale;
+            ImGui::Begin("PAY TO WIN", &MenDeal, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse);
+            
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            ImVec2 windowPos = ImGui::GetWindowPos();
+            ImVec2 windowSize = ImGui::GetWindowSize();
+            float headerHeight = 25.0f;
+            float footerHeight = 25.0f;
+            float contentPadding = 10.0f;
+            
+            drawList->AddRectFilled(windowPos, ImVec2(windowPos.x + windowSize.x, windowPos.y + headerHeight), ImGui::ColorConvertFloat4ToU32(COLOR_TITLE_BG), ImGui::GetStyle().WindowRounding, ImDrawFlags_RoundCornersTop);
+            drawList->AddText(ImVec2(windowPos.x + 10, windowPos.y + 5), ImGui::ColorConvertFloat4ToU32(COLOR_CHECK_MARK), "PAY TO WIN | MOALISA");
 
-                ImGui::Begin("PAY TO WIN | https://t.me/monstercheatez", &MenDeal, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse);
-
-                ImDrawList* drawList = ImGui::GetWindowDrawList();
-                ImVec2 windowPos = ImGui::GetWindowPos();
-                ImVec2 windowSize = ImGui::GetWindowSize();
-                float headerHeight = 25.0f;
-                float footerHeight = 25.0f; // Define footer height here for calculation
-                float contentPadding = 10.0f; // Padding for content
-                
-                // Draw Header Background
-                drawList->AddRectFilled(windowPos, ImVec2(windowPos.x + windowSize.x, windowPos.y + headerHeight), ImGui::ColorConvertFloat4ToU32(COLOR_TITLE_BG), ImGui::GetStyle().WindowRounding, ImDrawFlags_RoundCornersTop);
-                drawList->AddLine(ImVec2(windowPos.x, windowPos.y + headerHeight), ImVec2(windowPos.x + windowSize.x, windowPos.y + headerHeight), ImGui::ColorConvertFloat4ToU32(COLOR_BORDER));
-
-                // Title Text on the Left
-                const char* leftText = "PAY TO WIN";
-                ImVec2 leftTextSize = ImGui::CalcTextSize(leftText);
-                drawList->AddText(ImVec2(windowPos.x + 10, windowPos.y + (headerHeight - leftTextSize.y) * 0.5f), ImGui::ColorConvertFloat4ToU32(COLOR_CHECK_MARK), leftText);
-                
-                // Title Text on the Right
-                const char* titleText = "MOALISA";
-                ImVec2 textSize = ImGui::CalcTextSize(titleText);
-                drawList->AddText(ImVec2(windowPos.x + windowSize.x - textSize.x - 10, windowPos.y + (headerHeight - textSize.y) * 0.5f), ImGui::ColorConvertFloat4ToU32(COLOR_CHECK_MARK), titleText);
-
-                // Centered Logo
-                ImTextureID logoTex = getLogoTexture();
-                if (logoTex) {
-                     float logoW = getLogoImageWidth();
-                     float logoH = getLogoImageHeight();
-                     
-                     // Keep logo aspect ratio, fit within header height with some padding
-                     float maxLogoH = headerHeight - 4.0f; 
-                     float scale = maxLogoH / logoH;
-                     float drawW = logoW * scale;
-                     float drawH = logoH * scale;
-
-                     float logoX = windowPos.x + (windowSize.x - drawW) * 0.5f;
-                     float logoY = windowPos.y + (headerHeight - drawH) * 0.5f;
-
-                     drawList->AddImage(logoTex, ImVec2(logoX, logoY), ImVec2(logoX + drawW, logoY + drawH));
-                }
-
-                // Drag Area (Invisible Button)
-                ImGui::SetCursorPos(ImVec2(0, 0));
-                ImGui::InvisibleButton("##HeaderDrag", ImVec2(windowSize.x - 30, headerHeight));
-                if (ImGui::IsItemActive()) {
-                    ImVec2 delta = ImGui::GetIO().MouseDelta;
-                    ImGui::SetWindowPos(ImVec2(windowPos.x + delta.x, windowPos.y + delta.y));
-                }
-
-                // --- CONTENT CHILD WINDOW START ---
-                // Positioning the content with padding, below header and above footer
-                ImGui::SetCursorPos(ImVec2(contentPadding, headerHeight + contentPadding));
-                float contentHeight = windowSize.y - headerHeight - footerHeight - (contentPadding * 2);
-                float contentWidth = windowSize.x - (contentPadding * 2);
-                
-                if (ImGui::BeginChild("##MainContent", ImVec2(contentWidth, contentHeight), false, ImGuiWindowFlags_NoBackground))
+            ImGui::SetCursorPos(ImVec2(contentPadding, headerHeight + contentPadding));
+            if (ImGui::BeginChild("##MainContent", ImVec2(windowSize.x - 20, windowSize.y - 60), false, ImGuiWindowFlags_NoBackground))
+            {
+                if (ImGui::BeginTabBar("MainTabBar"))
                 {
-                    // --- TAB BAR START ---
-                    if (ImGui::BeginTabBar("MainTabBar"))
+                    if (ImGui::BeginTabItem(ICON_FA_EYE " ESP"))
                     {
-                        if (ImGui::BeginTabItem(ICON_FA_EYE " ESP"))
-                        {
-                        ImGui::Checkbox(ICON_FA_EYE " ESP Enable", &esp_enabled);
-                        ImGui::Separator();
-                        
-                        if (esp_enabled) {
-                            // --- Target Selection ---
-                            static bool firstInit = true;
-                            if (firstInit) {
-                                UpdateAssemblies();
-                                if (assembly_idx != -1) UpdateClasses(available_assemblies[assembly_idx]);
-                                firstInit = false;
-                            }
-
-                            if (ImGui::BeginCombo("Target Assembly", assembly_idx != -1 ? available_assemblies[assembly_idx].c_str() : "Select Assembly...")) {
-                                for (int i = 0; i < (int)available_assemblies.size(); i++) {
-                                    bool is_selected = (assembly_idx == i);
-                                    if (ImGui::Selectable(available_assemblies[i].c_str(), is_selected)) {
-                                        assembly_idx = i;
-                                        selected_assembly = available_assemblies[i];
-                                        UpdateClasses(selected_assembly);
-                                        class_idx = -1; // Reset class when assembly changes
-                                    }
-                                }
-                                ImGui::EndCombo();
-                            }
-
-                            if (ImGui::BeginCombo("Target Class", class_idx != -1 ? available_classes[class_idx].c_str() : "Select Class...")) {
-                                for (int i = 0; i < (int)available_classes.size(); i++) {
-                                    bool is_selected = (class_idx == i);
-                                    if (ImGui::Selectable(available_classes[i].c_str(), is_selected)) {
-                                        class_idx = i;
-                                        selected_class = available_classes[i];
-                                    }
-                                }
-                                ImGui::EndCombo();
-                            }
-                            ImGui::Separator();
-
-                            ImGui::Checkbox(ICON_FA_MINUS " ESP Line", &esp_line);
-                            if (esp_line) {
-                                static int esp_line_selection = 0;
-                                const char* esp_line_items[] = { "Top", "Middle", "Bottom" };
-                                
-                                if (ImGui::BeginCombo("Line Position", esp_line_items[esp_line_selection])) {
-                                    for (int i = 0; i < IM_ARRAYSIZE(esp_line_items); i++) {
-                                        bool is_selected = (esp_line_selection == i);
-                                        if (ImGui::Selectable(esp_line_items[i], is_selected)) {
-                                            esp_line_selection = i;
-                                        }
-                                        if (is_selected) {
-                                            ImGui::SetItemDefaultFocus();
-                                        }
-                                    }
-                                    ImGui::EndCombo();
-                                }
-                                
-                                esp_line_position = esp_line_selection;
-                            }
-                            
-                            static bool esp_box_enabled = false;
-                            ImGui::Checkbox(ICON_FA_SQUARE " ESP Box", &esp_box_enabled);
-                            if (esp_box_enabled) {
-                                static int esp_box_selection = 0;
-                                const char* esp_box_items[] = { "2D Box", "3D Box", "Corners Box" };
-                                
-                                if (ImGui::BeginCombo("Box Type", esp_box_items[esp_box_selection])) {
-                                    for (int i = 0; i < IM_ARRAYSIZE(esp_box_items); i++) {
-                                        bool is_selected = (esp_box_selection == i);
-                                        if (ImGui::Selectable(esp_box_items[i], is_selected)) {
-                                            esp_box_selection = i;
-                                        }
-                                        if (is_selected) {
-                                            ImGui::SetItemDefaultFocus();
-                                        }
-                                    }
-                                    ImGui::EndCombo();
-                                }
-                                
-                                esp_box_2d = (esp_box_selection == 0);
-                                esp_box_3d = (esp_box_selection == 1);
-                                esp_corners = (esp_box_selection == 2);
-                            } else {
-                                esp_box_2d = false;
-                                esp_box_3d = false;
-                                esp_corners = false;
-                            }
-                            
-                            ImGui::Checkbox(ICON_FA_RULER " ESP Distance", &esp_distance_enabled);
-                            
-                            ImGui::Checkbox(ICON_FA_BONE " ESP Skeleton", &esp_skeleton);
-                            
-                            updateESPVariables(esp_line, esp_distance_enabled, esp_skeleton, esp_line_position, esp_box_2d, esp_box_3d, esp_corners);
-                        }
-                        
-                        ImGui::Spacing();
-                        ImGui::Separator();
-                        
-                        ImGui::TextColored(COLOR_CHECK_MARK, "Credits:");
-                        ImGui::Text("Released By: MIEMona");
-                        ImGui::Text("IL2CPP Framework: MIEMona (MONALISA)");
+                        ImGui::Checkbox("ESP Enable", &esp_enabled);
+                        ImGui::Checkbox("ESP Line", &esp_line);
+                        ImGui::Checkbox("ESP Distance", &esp_distance_enabled);
+                        ImGui::Checkbox("ESP Skeleton", &esp_skeleton);
+                        ImGui::Checkbox("ESP Box 2D", &esp_box_2d);
+                        ImGui::Checkbox("ESP Box 3D", &esp_box_3d);
+                        ImGui::Checkbox("ESP Corners", &esp_corners);
                         ImGui::EndTabItem();
                     }
-                    
-                    
-                ImGui::EndTabBar();
+                    if (ImGui::BeginTabItem(ICON_FA_BOLT " HACKS"))
+                    {
+                        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.28f, 1.0f), "Movement Hacks");
+                        ImGui::Checkbox("FLY V2 (Fly Up)", &hack_fly);
+                        if (hack_fly) ImGui::SliderFloat("Fly Speed", &hack_fly_speed, 1.0f, 20.0f);
+                        
+                        ImGui::Separator();
+                        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.28f, 1.0f), "Combat Hacks");
+                        ImGui::Checkbox("TELEKILL (Closest Enemy)", &hack_telekill);
+                        if (hack_telekill) {
+                            const char* dist_items[] = { "8 M", "10 M", "100 M" };
+                            static int dist_idx = 0;
+                            if (ImGui::Combo("Tele Distance", &dist_idx, dist_items, 3)) {
+                                if (dist_idx == 0) hack_telekill_dist = 8;
+                                else if (dist_idx == 1) hack_telekill_dist = 10;
+                                else if (dist_idx == 2) hack_telekill_dist = 100;
+                            }
+                        }
+                        ImGui::EndTabItem();
+                    }
+                    ImGui::EndTabBar();
                 }
-                } // Closes BeginChild
-                ImGui::EndChild(); // End MainContent
-                // --- CONTENT CHILD WINDOW END ---
-
-                // Custom Footer
-                ImVec2 footerPos = ImVec2(windowPos.x, windowPos.y + windowSize.y - footerHeight);
-                // Footer Background
-                drawList->AddRectFilled(footerPos, ImVec2(windowPos.x + windowSize.x, footerPos.y + footerHeight), ImGui::ColorConvertFloat4ToU32(COLOR_TITLE_BG), ImGui::GetStyle().WindowRounding, ImDrawFlags_RoundCornersBottom);
-                // Top border of footer
-                drawList->AddLine(footerPos, ImVec2(footerPos.x + windowSize.x, footerPos.y), ImGui::ColorConvertFloat4ToU32(COLOR_BORDER));
-
-                static char footerTime[64];
-                time_t now = time(0);
-                struct tm tstruct;
-                tstruct = *localtime(&now);
-                strftime(footerTime, sizeof(footerTime), "%Y-%m-%d %H:%M:%S", &tstruct);
-
-                NSString *gameNameStr = [[NSBundle mainBundle] infoDictionary][@"CFBundleDisplayName"] ?: [[NSBundle mainBundle] infoDictionary][@"CFBundleName"] ?: @"Game";
-                NSString *bundleIDStr = [[NSBundle mainBundle] bundleIdentifier] ?: @"com.unknown.game";
-                NSString *versionStr = [[NSBundle mainBundle] infoDictionary][@"CFBundleShortVersionString"] ?: @"1.0";
-                
-                const char* gameInfo = [[NSString stringWithFormat:@"%@ | v%@", gameNameStr, versionStr] UTF8String];
-                const char* urlStr = "https://goodfeelings.cc";
-
-                float centerY = footerPos.y + (footerHeight - ImGui::GetTextLineHeight()) * 0.5f;
-
-                // Left: Time
-                drawList->AddText(ImVec2(footerPos.x + 10, centerY), ImGui::ColorConvertFloat4ToU32(ImVec4(0.6f, 0.6f, 0.6f, 1.0f)), footerTime);
-
-                // Center: URL
-                float urlWidth = ImGui::CalcTextSize(urlStr).x;
-                drawList->AddText(ImVec2(footerPos.x + (windowSize.x - urlWidth) * 0.5f, centerY), ImGui::ColorConvertFloat4ToU32(COLOR_CHECK_MARK), urlStr);
-
-                // Right: Game Info
-                float infoWidth = ImGui::CalcTextSize(gameInfo).x;
-                drawList->AddText(ImVec2(footerPos.x + windowSize.x - infoWidth - 10, centerY), ImGui::ColorConvertFloat4ToU32(ImVec4(0.6f, 0.6f, 0.6f, 1.0f)), gameInfo);
-
-                ImGui::End();
-                
-                // --- DEBUG OVERLAY REMOVED ---
-                
+                ImGui::EndChild();
             }
-            ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
-
-            if (esp_enabled) {
-                drawPlayerRootESP(draw_list);
-            }
-
-
-
-            ImGui::Render();
-            ImDrawData* draw_data = ImGui::GetDrawData();
-            ImGui_ImplMetal_RenderDrawData(draw_data, commandBuffer, renderEncoder);
-          
-            [renderEncoder popDebugGroup];
-            [renderEncoder endEncoding];
-
-            [commandBuffer presentDrawable:view.currentDrawable];
+            ImGui::End();
         }
-
-        [commandBuffer commit];
+        
+        ImGui::Render();
+        ImGui_ImplMetal_RenderDrawData(ImGui::GetDrawData(), commandBuffer, renderEncoder);
+        [renderEncoder endEncoding];
+        [commandBuffer presentDrawable:view.currentDrawable];
+    }
+    [commandBuffer commit];
 }
 
-- (void)mtkView:(MTKView*)view drawableSizeWillChange:(CGSize)size
-{
-    
++ (void)showChange:(BOOL)open {
+    MenDeal = open;
 }
 
 @end
-
