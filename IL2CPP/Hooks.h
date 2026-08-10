@@ -125,6 +125,22 @@ void *Camera_get_main() {
     }
 }
 
+void Transform_set_position(void *instance, Vector3 value) {
+    try {
+        reinterpret_cast<void(__fastcall *)(void *, Vector3)>((uint64_t) IL2Cpp::GetMethodOffset("UnityEngine.CoreModule.dll", "UnityEngine", "Transform", "set_position", 1))(instance, value);
+    } catch (...) {
+        Logger::error("Failed to get Transform_set_position method offset");
+    }
+}
+
+int PlayerRoot_get_TeamId(void *instance) {
+    try {
+        return reinterpret_cast<int(__fastcall *)(void *)>((uint64_t) IL2Cpp::GetMethodOffset("_CombatMaster.Battle.dll", "CombatMaster.Battle.Gameplay.Player", "PlayerRoot", "get_TeamId", 0))(instance);
+    } catch (...) {
+        return 0;
+    }
+}
+
 monoString *String_CreateString(const char *str) {
     try {
         return reinterpret_cast<monoString *(__fastcall *)(void *, const char *, int, int)>((uint64_t) IL2Cpp::GetMethodOffset("mscorlib.dll", "System", "String", "CreateString", 3))(NULL, str, 0, strlen(str));
