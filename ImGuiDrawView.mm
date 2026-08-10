@@ -3,13 +3,24 @@
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
 #import <Foundation/Foundation.h>
+
+// Older ImGui releases clear C++ objects with memset. Newer Clang versions
+// report that pattern as -Wnontrivial-memcall, and Theos commonly promotes
+// warnings to errors. Keep the compatibility warning local to ImGui headers.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnontrivial-memcall"
+#endif
+
 #include "IMGUI/imgui.h"
 #include "IMGUI/imgui_internal.h"
 #include "IMGUI/imgui_impl_metal.h"
-#include "IMGUI/imgui_impl_metal.h"
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
 #import "Resources/Fonts/IconsFontAwesome6.h"
-#import "Resources/Fonts/IconsFontAwesome6_Bytes.h"
-#import "Resources/Fonts/din_alternate.hpp"
 #include "IMGUI/Il2cpp.h"
 #include <vector>
 #include <string>
@@ -494,16 +505,13 @@ static bool MenDeal = true;
     ImFontConfig font_cfg;
     font_cfg.FontDataOwnedByAtlas = false;
     
-    // Load DIN Alternate for UI
-    io.Fonts->AddFontFromMemoryTTF((void*)din_alternate_data, din_alternate_size, 18.0f, &font_cfg);
-    
-    // Load Icons
-    static const ImWchar icons_ranges[] = { ICON_MIN_FA, ICON_MAX_16_FA, 0 };
-    ImFontConfig icons_config;
-    icons_config.MergeMode = true;
-    icons_config.PixelSnapH = true;
-    icons_config.FontDataOwnedByAtlas = false;
-    io.Fonts->AddFontFromMemoryTTF((void*)IconsFontAwesome6_Bytes, sizeof(IconsFontAwesome6_Bytes), 16.0f, &icons_config, icons_ranges);
+    // The font headers used by older versions of this project expose
+    // different symbol names across font generators. Referencing one fixed
+    // symbol makes the source fail with "undeclared identifier" when the
+    // matching generated header is not present. The built-in font is a safe
+    // fallback and keeps the menu buildable; a generated font can be added
+    // here later once its exported symbol names are known.
+    io.Fonts->AddFontDefault(&font_cfg);
 
     ImGui_ImplMetal_Init(self.device);
     
@@ -576,6 +584,14 @@ static bool MenDeal = true;
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self updateIOWithTouchEvent:event]; }
 - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self updateIOWithTouchEvent:event]; }
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self updateIOWithTouchEvent:event]; }
+
+- (void)mtkView:(MTKView *)view drawableSizeWillChange:(CGSize)size
+{
+    // MTKViewDelegate requires this callback on newer MetalKit SDKs.
+    // ImGui reads the current drawable size during drawInMTKView:.
+    (void)view;
+    (void)size;
+}
 
 - (void)drawInitializationOverlay {
     ImGui::SetNextWindowPos(ImVec2(0, 0));
