@@ -1,4 +1,3 @@
-
 ARCHS = arm64
 DEBUG = 0
 FINALPACKAGE = 1
@@ -23,6 +22,7 @@ ifeq ($(MOBILE_THEOS),1)
   SYSROOT = $(SDK_PATH)
 else
   TARGET = iphone:latest
+endif
 
 include $(THEOS)/makefiles/common.mk
 
