@@ -1,46 +1,30 @@
-name: Build iOS Tweak
+name: Build Tweak
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: macos-latest
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
+    - uses: actions/checkout@v4
 
-    - name: Install Dependencies
-      run: |
-        brew install make
-        brew install ldid
-
-    - name: Setup Theos
+    - name: Install Theos
       run: |
         git clone --recursive https://github.com/theos/theos.git $HOME/theos
         echo "THEOS=$HOME/theos" >> $GITHUB_ENV
-        echo "$HOME/theos/bin:$PATH" >> $GITHUB_PATH
-
-    - name: Setup iOS SDK
-      run: |
-        rm -rf $HOME/theos/sdks
-        git clone --depth 1 https://github.com/theos/sdks.git $HOME/theos/sdks
+        echo "$HOME/theos/bin" >> $GITHUB_PATH
+        brew install ldid
 
     - name: Build Tweak
       run: |
-        export THEOS=$HOME/theos
-        export ARCHS=arm64
-        export TARGET=iphone:clang:latest:16.5
-        make package FINALPACKAGE=1
+        make clean
+        make package
 
-    - name: Upload Artifact
+    - name: Upload deb artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ZEXIS-Tweak
-        path: packages/*.deb
-        if-no-files-found: warn
+        name: mod
+        path: ./packages/*.deb
