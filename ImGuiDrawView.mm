@@ -30,7 +30,7 @@
 #include "DrawHelpers.mm"
 // ═══════════════════════════════════════════════════════════════════
 //  Combat Master Feature States  (dump.cs offsets)
-//  PlayerRoot       _B0=PlayerMovement  _D8=PlayerAimAssist
+//  PlayerRoot       _B0=PlayerMovement  _D8=PlayerAimAssist  IsOwner=0x108
 //  PlayerMovement   _BC=gravityForce    _94=isInAir  _70=HeadRot  _80=Velocity
 //  PlayerAimAssist  _88=closestEnemy    _64=angleThreshold  _30=sightAngle
 // ═══════════════════════════════════════════════════════════════════
@@ -47,6 +47,15 @@ static float feat_tele_dist    = 2.0f;
 template<typename T>
 static inline T& FieldAt(void* obj, int offset) {
     return *reinterpret_cast<T*>(reinterpret_cast<uintptr_t>(obj) + offset);
+}
+
+// คำนวณ forward vector จาก rotation quaternion (แทน Transform_get_forward ที่ไม่มีใน Hooks.h)
+static Vector3 QuatForward(float x, float y, float z, float w) {
+    return {
+        2.f*(x*z + w*y),
+        2.f*(y*z - w*x),
+        1.f - 2.f*(x*x + y*y)
+    };
 }
 
 static void* CM_GetLocalRoot() {
@@ -76,9 +85,20 @@ static std::vector<void*> CM_GetEnemies() {
     return v;
 }
 
+static void CM_SetPosition(void* transform, Vector3 pos) {
+    // set_position ผ่าน IL2CPP method offset โดยตรง
+    void* method = IL2Cpp::GetMethodOffset("UnityEngine.CoreModule.dll",
+        "UnityEngine", "Transform", "set_position_Injected", 1);
+    if (method) reinterpret_cast<void(__fastcall*)(void*,Vector3*)>(
+        (uint64_t)method)(transform, &pos);
+}
+
 static void* CM_ClosestEnemy(void* cam, Vector3 camPos) {
     auto enemies = CM_GetEnemies();
-    void* best = nullptr; float bestD = feat_aim_fov * (kHeight / 120.0f);
+    void* best = nullptr;
+    // FIX: cast ทั้งหมดเป็น float ชัดเจน หลีกเลี่ยง CGFloat vs float
+    float fovPx = feat_aim_fov * ((float)kHeight / 120.0f);
+    float bestD = fovPx;
     for (void* e : enemies) {
         void* go = Component_get_gameObject(e);
         if (!go || !GameObject_get_activeInHierarchy(go)) continue;
@@ -87,7 +107,8 @@ static void* CM_ClosestEnemy(void* cam, Vector3 camPos) {
         Vector3 p = Transform_get_position(tf); p.y += 1.4f;
         Vector3 s; bool vis; WorldToScreen(cam, p, s, vis);
         if (!vis) continue;
-        float dx = s.x - kWidth*.5f, dy = s.y - kHeight*.5f;
+        float cx = (float)kWidth * 0.5f, cy = (float)kHeight * 0.5f;
+        float dx = s.x - cx, dy = s.y - cy;
         float d = sqrtf(dx*dx + dy*dy);
         if (d < bestD) { bestD = d; best = e; }
     }
@@ -105,18 +126,18 @@ static void CM_DoAimbot(void* cam, Vector3 camPos) {
     if (!local) return;
     void* aa = FieldAt<void*>(local, 0xD8);
     if (aa) {
-        FieldAt<void*>(aa, 0x88)  = target;
-        FieldAt<float>(aa, 0x64)  = feat_silent_aim ? 180.0f : feat_aim_fov;
-        FieldAt<float>(aa, 0x30)  = feat_silent_aim ? 180.0f : feat_aim_fov;
+        FieldAt<void*>(aa, 0x88) = target;
+        FieldAt<float>(aa, 0x64) = feat_silent_aim ? 180.0f : feat_aim_fov;
+        FieldAt<float>(aa, 0x30) = feat_silent_aim ? 180.0f : feat_aim_fov;
     }
     if (feat_aimbot) {
         void* pm = FieldAt<void*>(local, 0xB0);
         if (pm) {
-            Vector3 d = { tp.x-camPos.x, tp.y-camPos.y, tp.z-camPos.z };
-            float len = sqrtf(d.x*d.x+d.y*d.y+d.z*d.z);
+            float dx = tp.x-camPos.x, dy = tp.y-camPos.y, dz = tp.z-camPos.z;
+            float len = sqrtf(dx*dx+dy*dy+dz*dz);
             if (len > 0.01f) {
-                float yaw   = atan2f(d.x,d.z)*(180.f/(float)M_PI);
-                float pitch = -asinf(d.y/len)*(180.f/(float)M_PI);
+                float yaw   = atan2f(dx, dz) * (180.f / (float)M_PI);
+                float pitch = -asinf(dy / len)  * (180.f / (float)M_PI);
                 Vector2& hr = FieldAt<Vector2>(pm, 0x70);
                 hr.x = pitch; hr.y = yaw;
             }
@@ -126,57 +147,68 @@ static void CM_DoAimbot(void* cam, Vector3 camPos) {
 
 static void CM_DoTeleKill() {
     void* local = CM_GetLocalRoot(); if (!local) return;
-    void* cam = Camera_get_main(); if (!cam) return;
-    Vector3 cp = Transform_get_position(Component_get_transform(cam));
     auto enemies = CM_GetEnemies();
     void* best = nullptr; float bd = 9999.f;
+    void* cam = Camera_get_main(); if (!cam) return;
+    void* camTf = Component_get_transform(cam); if (!camTf) return;
+    Vector3 cp = Transform_get_position(camTf);
     for (void* e : enemies) {
         void* tf = Component_get_transform(e); if (!tf) continue;
         Vector3 p = Transform_get_position(tf);
-        float d = Vector3::Distance(cp, p);
+        float dx=p.x-cp.x, dy=p.y-cp.y, dz=p.z-cp.z;
+        float d = sqrtf(dx*dx+dy*dy+dz*dz);
         if (d < bd) { bd = d; best = e; }
     }
     if (!best) return;
-    Vector3 tp = Transform_get_position(Component_get_transform(best));
-    void* ltf = Component_get_transform(local);
-    if (ltf) Transform_set_position(ltf, {tp.x, tp.y, tp.z + feat_tele_dist});
+    void* targetTf = Component_get_transform(best); if (!targetTf) return;
+    Vector3 tp = Transform_get_position(targetTf);
+    void* ltf = Component_get_transform(local); if (!ltf) return;
+    Vector3 newPos = {tp.x, tp.y, tp.z + feat_tele_dist};
+    CM_SetPosition(ltf, newPos);
 }
 
 static void CM_DoUnderKill() {
     void* local = CM_GetLocalRoot(); if (!local) return;
-    void* cam = Camera_get_main(); if (!cam) return;
-    Vector3 cp = Transform_get_position(Component_get_transform(cam));
     auto enemies = CM_GetEnemies();
     void* best = nullptr; float bd = 9999.f;
+    void* cam = Camera_get_main(); if (!cam) return;
+    void* camTf = Component_get_transform(cam); if (!camTf) return;
+    Vector3 cp = Transform_get_position(camTf);
     for (void* e : enemies) {
         void* tf = Component_get_transform(e); if (!tf) continue;
         Vector3 p = Transform_get_position(tf);
-        float d = Vector3::Distance(cp, p);
+        float dx=p.x-cp.x, dy=p.y-cp.y, dz=p.z-cp.z;
+        float d = sqrtf(dx*dx+dy*dy+dz*dz);
         if (d < bd) { bd = d; best = e; }
     }
     if (!best) return;
-    Vector3 tp = Transform_get_position(Component_get_transform(best));
-    void* ltf = Component_get_transform(local);
-    if (ltf) Transform_set_position(ltf, {tp.x, tp.y - 1.8f, tp.z});
+    void* targetTf = Component_get_transform(best); if (!targetTf) return;
+    Vector3 tp = Transform_get_position(targetTf);
+    void* ltf = Component_get_transform(local); if (!ltf) return;
+    Vector3 newPos = {tp.x, tp.y - 1.8f, tp.z};
+    CM_SetPosition(ltf, newPos);
 }
 
-static void CM_DoFly(void* cam) {
+static void CM_DoFly() {
     void* local = CM_GetLocalRoot(); if (!local) return;
     void* pm = FieldAt<void*>(local, 0xB0); if (!pm) return;
     FieldAt<float>(pm, 0xBC) = 0.0f;
-    FieldAt<bool>(pm, 0x94)  = true;
-    FieldAt<bool>(pm, 0x96)  = false;
+    FieldAt<bool>(pm,  0x94) = true;
+    FieldAt<bool>(pm,  0x96) = false;
     Vector3& vel = FieldAt<Vector3>(pm, 0x80); vel.y = 0.f;
 }
 
-static void CM_DoAltFly(void* cam) {
+static void CM_DoAltFly() {
     void* local = CM_GetLocalRoot(); if (!local) return;
     void* pm = FieldAt<void*>(local, 0xB0); if (!pm) return;
-    void* ctf = Component_get_transform(cam); if (!ctf) return;
-    Vector3 fwd = Transform_get_forward(ctf);
+    void* cam = Camera_get_main(); if (!cam) return;
+    void* camTf = Component_get_transform(cam); if (!camTf) return;
+    // FIX: ใช้ rotation quaternion แทน Transform_get_forward
+    Quaternion rot = FieldAt<Quaternion>(camTf, 0x18); // rotation backing field offset
+    Vector3 fwd = QuatForward(rot.x, rot.y, rot.z, rot.w);
     FieldAt<float>(pm, 0xBC) = 0.0f;
-    FieldAt<bool>(pm, 0x94)  = true;
-    FieldAt<bool>(pm, 0x96)  = false;
+    FieldAt<bool>(pm,  0x94) = true;
+    FieldAt<bool>(pm,  0x96) = false;
     Vector3& vel = FieldAt<Vector3>(pm, 0x80);
     vel = {fwd.x*feat_alt_fly_spd, fwd.y*feat_alt_fly_spd, fwd.z*feat_alt_fly_spd};
 }
@@ -185,23 +217,25 @@ static void CM_ResetFly() {
     void* local = CM_GetLocalRoot(); if (!local) return;
     void* pm = FieldAt<void*>(local, 0xB0); if (!pm) return;
     FieldAt<float>(pm, 0xBC) = -20.0f;
-    FieldAt<bool>(pm, 0x94)  = false;
-    FieldAt<bool>(pm, 0x96)  = false;
+    FieldAt<bool>(pm,  0x94) = false;
+    FieldAt<bool>(pm,  0x96) = false;
 }
 
 static void CM_RunFeatures(ImDrawList* bg) {
     void* cam = Camera_get_main();
     Vector3 cp = {0,0,0};
-    if (cam) { void* ctf=Component_get_transform(cam); if(ctf) cp=Transform_get_position(ctf); }
+    if (cam) { void* ctf = Component_get_transform(cam); if (ctf) cp = Transform_get_position(ctf); }
     if (feat_aimbot || feat_silent_aim) CM_DoAimbot(cam, cp);
-    if (feat_telekill)  CM_DoTeleKill();
-    if (feat_underkill) CM_DoUnderKill();
-    if (feat_fly)       CM_DoFly(cam);
-    else if (feat_alt_fly) CM_DoAltFly(cam);
-    // FOV Circle
+    if (feat_telekill)   CM_DoTeleKill();
+    if (feat_underkill)  CM_DoUnderKill();
+    if (feat_fly)        CM_DoFly();
+    else if (feat_alt_fly) CM_DoAltFly();
+    // FOV Circle — FIX: cast เป็น float ชัดเจน
     if (feat_aimbot || feat_silent_aim) {
-        float px = feat_aim_fov*(kHeight/120.0f);
-        bg->AddCircle(ImVec2(kWidth*.5f,kHeight*.5f), px, IM_COL32(0,229,255,90), 64, 1.5f);
+        float px = feat_aim_fov * ((float)kHeight / 120.0f);
+        float cx = (float)kWidth  * 0.5f;
+        float cy = (float)kHeight * 0.5f;
+        bg->AddCircle(ImVec2(cx, cy), px, IM_COL32(0,229,255,90), 64, 1.5f);
     }
 }
 
@@ -1044,19 +1078,19 @@ static bool MenDeal = true;
                         ImGui::EndTabItem();
                         }
 
-                        // ══════════════════════ TAB: AIMBOT ══════════════════════
+                        // ══════════ TAB: AIMBOT ══════════
                         if (ImGui::BeginTabItem(ICON_FA_CROSSHAIRS " AIMBOT"))
                         {
                             ImGui::TextColored(ImVec4(0.f,0.9f,1.f,1.f), "[ Aim ]");
                             ImGui::Separator();
 
-                            ImGui::PushID("aim_ab");
+                            ImGui::PushID("ab");
                             if (feat_aimbot) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.f,0.35f,0.4f,1.f));
                             ImGui::Checkbox(ICON_FA_BULLSEYE " Aimbot", &feat_aimbot);
                             if (feat_aimbot) { ImGui::PopStyleColor(); feat_silent_aim = false; }
                             ImGui::PopID();
 
-                            ImGui::PushID("aim_sa");
+                            ImGui::PushID("sa");
                             if (feat_silent_aim) ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.f,0.35f,0.4f,1.f));
                             ImGui::Checkbox(ICON_FA_USER_NINJA " Silent Aim", &feat_silent_aim);
                             if (feat_silent_aim) { ImGui::PopStyleColor(); feat_aimbot = false; }
@@ -1068,22 +1102,22 @@ static bool MenDeal = true;
                             ImGui::SetNextItemWidth(contentWidth - 10);
                             ImGui::SliderFloat("##fov", &feat_aim_fov, 1.f, 45.f, "FOV: %.1f deg");
 
-                            // FOV preview circle
+                            // FOV preview — FIX: cast เป็น float
                             {
-                                float r = std::min(feat_aim_fov*(kHeight/120.f), 40.f);
+                                float r = feat_aim_fov * ((float)kHeight / 120.f);
+                                if (r > 40.f) r = 40.f;   // FIX: ไม่ใช้ std::min ที่ type conflict
                                 ImVec2 cp2 = ImGui::GetCursorScreenPos();
                                 ImGui::GetWindowDrawList()->AddCircle(
-                                    ImVec2(cp2.x+contentWidth*.5f, cp2.y+r+4), r,
-                                    IM_COL32(0,229,255,110), 48, 1.5f);
-                                ImGui::Dummy(ImVec2(contentWidth, r*2+8));
+                                    ImVec2(cp2.x + contentWidth * 0.5f, cp2.y + r + 4.f),
+                                    r, IM_COL32(0,229,255,110), 48, 1.5f);
+                                ImGui::Dummy(ImVec2(contentWidth, r * 2.f + 8.f));
                             }
                             ImGui::EndTabItem();
                         }
 
-                        // ══════════════════════ TAB: MOVEMENT ════════════════════
+                        // ══════════ TAB: MOVEMENT ══════════
                         if (ImGui::BeginTabItem(ICON_FA_PERSON_RUNNING " MOVE"))
                         {
-                            // Kill
                             ImGui::TextColored(ImVec4(1.f,0.55f,0.f,1.f), "[ Kill ]");
                             ImGui::Separator();
 
@@ -1102,7 +1136,6 @@ static bool MenDeal = true;
                             if (feat_underkill) ImGui::PopStyleColor();
                             ImGui::PopID();
 
-                            // Fly
                             ImGui::Spacing();
                             ImGui::TextColored(ImVec4(0.f,0.85f,0.4f,1.f), "[ Fly ]");
                             ImGui::Separator();
